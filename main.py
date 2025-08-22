@@ -1,31 +1,14 @@
-import random, secrets
+import streamlit as st
+import secrets
 from math import gcd
 
 # -----------------------------
 # Utilities
 # -----------------------------
 
-# Small primes for quick trial division
-_small_primes = [
-    2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47,
-    53, 59, 61, 67, 71, 73, 79, 83, 89, 97, 101, 103, 107, 109,
-    113, 127, 131, 137, 139, 149, 151, 157, 163, 167, 173, 179,
-    181, 191, 193, 197, 199, 211, 223, 227, 229, 233, 239, 241,
-    251, 257, 263, 269, 271, 277, 281, 283, 293, 307, 311, 313,
-    317, 331, 337, 347, 349, 353, 359, 367, 373, 379, 383, 389,
-    397, 401, 409, 419, 421, 431, 433, 439, 443, 449, 457, 461,
-    463, 467, 479, 487, 491, 499, 503, 509, 521, 523, 541, 547,
-    557, 563, 569, 571, 577, 587, 593, 599, 601, 607, 613, 617,
-    619, 631, 641, 643, 647, 653, 659, 661, 673, 677, 683, 691,
-    701, 709, 719, 727, 733, 739, 743, 751, 757, 761, 769, 773,
-    787, 797, 809, 811, 821, 823, 827, 829, 839, 853, 857, 859,
-    863, 877, 881, 883, 887, 907, 911, 919, 929, 937, 941, 947,
-    953, 967, 971, 977, 983, 991, 997
-]
+_small_primes = [2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31]
 
-
-# Miller–Rabin primality test
-def _miller_rabin(n: int, bases=None) -> bool:
+def _miller_rabin(n: int, k=5) -> bool:
     if n < 2:
         return False
     for p in _small_primes:
@@ -33,18 +16,12 @@ def _miller_rabin(n: int, bases=None) -> bool:
             return True
         if n % p == 0:
             return False
-    # write n-1 = 2^r * d
-    d, r = n - 1, 0
+    r, d = 0, n - 1
     while d % 2 == 0:
-        d //= 2
         r += 1
-    if bases is None:
-        bases = [2, 3, 5, 7, 11, 13, 17]
-        if n.bit_length() > 64:  # add some random bases for bigger numbers
-            bases = list(dict.fromkeys(bases + [secrets.randbelow(n - 3) + 2 for _ in range(5)]))
-    for a in bases:
-        if a % n == 0:
-            continue
+        d //= 2
+    for _ in range(k):
+        a = secrets.randbelow(n - 3) + 2
         x = pow(a, d, n)
         if x in (1, n - 1):
             continue
@@ -56,42 +33,24 @@ def _miller_rabin(n: int, bases=None) -> bool:
             return False
     return True
 
-
-def is_probable_prime(n: int) -> bool:
-    return _miller_rabin(n)
-
-
-def random_prime(bits: int) -> int:
-    """Optimized prime generator using wheel + trial division + MR."""
-    wheel = 15015
-    residues = [r for r in range(1, wheel, 2) if gcd(r, wheel) == 1]
+def random_prime(bits=16):
     while True:
-        base = secrets.randbits(bits - wheel.bit_length())
-        candidate_base = base << wheel.bit_length()
-        for r in residues:
-            n = candidate_base + r
-            n |= (1 << (bits - 1))  # ensure correct bit length
-            if all(n % p != 0 for p in _small_primes):
-                if is_probable_prime(n):
-                    return n
+        n = secrets.randbits(bits) | (1 << (bits - 1)) | 1
+        if _miller_rabin(n):
+            return n
 
-
-def safe_prime(bits: int):
-    """Generate safe prime p=2q+1 with q prime."""
+def safe_prime(bits=16):
     while True:
         q = random_prime(bits - 1)
         p = 2 * q + 1
-        if is_probable_prime(p):
+        if _miller_rabin(p):
             return p, q
 
-
-def find_generator(p: int, q: int) -> int:
-    """Find generator g for group modulo safe prime p."""
+def find_generator(p, q):
     while True:
         g = secrets.randbelow(p - 3) + 2
         if pow(g, 2, p) != 1 and pow(g, q, p) != 1:
             return g
-
 
 # -----------------------------
 # ElGamal
@@ -99,19 +58,16 @@ def find_generator(p: int, q: int) -> int:
 def elgamal_keygen(bits=32):
     p, q = safe_prime(bits)
     g = find_generator(p, q)
-    x = secrets.randbelow(p - 2) + 1  # private key
-    y = pow(g, x, p)  # public key
+    x = secrets.randbelow(p - 2) + 1
+    y = pow(g, x, p)
     return (p, g, y), x
-
 
 def elgamal_encrypt(pub_key, m: int):
     p, g, y = pub_key
-    assert 0 <= m < p
     k = secrets.randbelow(p - 2) + 1
     a = pow(g, k, p)
     b = (m * pow(y, k, p)) % p
     return (a, b)
-
 
 def elgamal_decrypt(priv_key, pub_key, ct):
     p, g, y = pub_key
@@ -120,17 +76,55 @@ def elgamal_decrypt(priv_key, pub_key, ct):
     s_inv = pow(s, -1, p)
     return (b * s_inv) % p
 
+# -----------------------------
+# Streamlit UI
+# -----------------------------
+st.title("🔐 ElGamal Cryptosystem Demo")
 
-# -----------------------------
-# Example usage
-# -----------------------------
-if __name__ == "__main__":
-    pub, priv = elgamal_keygen(bits=32)  # try with 32 bits; increase to 64/128
-    m = 2025 % pub[0]
-    ct = elgamal_encrypt(pub, m)
-    m2 = elgamal_decrypt(priv, pub, ct)
-    print("Public key:", pub)
-    print("Private key:", priv)
-    print("Plaintext:", m)
-    print("Ciphertext:", ct)
-    print("Decrypted:", m2)
+st.sidebar.header("Choose Functionality")
+choice = st.sidebar.radio("Go to", ["Key Generation", "Encoder", "Decoder"])
+
+# 1) Key Generation
+if choice == "Key Generation":
+    st.header("1️⃣ Public/Private Key Generation")
+    bits = st.slider("Select key size (bits)", 16, 64, 32)
+    if st.button("Generate Keys"):
+        pub, priv = elgamal_keygen(bits)
+        st.success(f"✅ Keys generated with {bits}-bit safe prime")
+        st.text_area("Public Key (p, g, y)", str(pub), height=100)
+        st.text_input("Private Key (x)", str(priv))
+
+# 2) Encoder
+elif choice == "Encoder":
+    st.header("2️⃣ Encrypt a Message")
+    pub_key_str = st.text_area("Enter Public Key (as tuple: p,g,y)")
+    message = st.text_input("Enter your text message")
+    if st.button("Encrypt"):
+        try:
+            pub = eval(pub_key_str)
+            # Convert text to integer (basic encoding)
+            m_int = int.from_bytes(message.encode(), "big") % pub[0]
+            ct = elgamal_encrypt(pub, m_int)
+            st.success("✅ Message Encrypted")
+            st.text_area("Ciphertext (a, b)", str(ct))
+        except Exception as e:
+            st.error(f"Error: {e}")
+
+# 3) Decoder
+elif choice == "Decoder":
+    st.header("3️⃣ Decrypt a Message")
+    pub_key_str = st.text_area("Enter Public Key (as tuple: p,g,y)")
+    priv_key_str = st.text_input("Enter Private Key (x)")
+    ciphertext_str = st.text_area("Enter Ciphertext (as tuple: a,b)")
+    if st.button("Decrypt"):
+        try:
+            pub = eval(pub_key_str)
+            priv = int(priv_key_str)
+            ct = eval(ciphertext_str)
+            m_int = elgamal_decrypt(priv, pub, ct)
+            # Convert integer back to text
+            decrypted = m_int.to_bytes((m_int.bit_length() + 7)//8, "big").decode(errors="ignore")
+            st.success("✅ Message Decrypted")
+            st.text_area("Decrypted Message", decrypted)
+        except Exception as e:
+            st.error(f"Error: {e}")
